@@ -10,6 +10,7 @@ python = "^3.11"
 google-api-python-client = "^2.149.0"
 google-auth-httplib2 = "^0.2.0"
 google-auth-oauthlib = "^1.2.1"
+google-api-python-client-stubs = "^1.28.0"
 
 
 [build-system]
