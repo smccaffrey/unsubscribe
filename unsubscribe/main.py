@@ -1,12 +1,21 @@
 import re
+import requests
 
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
 from googleapiclient.discovery import build, Resource  # type: ignore
+import tldextract  # type: ignore
 
 # If modifying these SCOPES, delete the token.json file
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+
+ALLOWLIST = [
+    'linkedin.com', 
+    'medium.com', 
+    'onemedical.com', 
+    'circleci.com', 
+]
 
 def authenticate_gmail() -> Resource:
     """Authenticate and create a Gmail API service instance."""
@@ -27,12 +36,22 @@ def authenticate_gmail() -> Resource:
 
     return return_service
 
-def get_unsubscribe_links_from_message(message: dict) -> List[str]:
+def get_unsubscribe_links_from_message(message: Union[Dict[str, object], None]) -> List[str]:
 
     """Extract unsubscribe links from the email message."""
     unsubscribe_links: List[str] = []
-    payload: dict = message.get('payload', {})
-    headers: List[dict] = payload.get('headers', [])
+    
+    # Ensure message is a dictionary
+    if not isinstance(message, dict):
+        return unsubscribe_links
+
+    # Attempt to get 'payload' and ensure it's a dictionary
+    payload = message.get('payload', {})
+    if not isinstance(payload, dict):
+        payload = {}
+
+    # Attempt to get headers
+    headers: List[Dict[str, str]] = payload.get('headers', [])
 
     # Check for List-Unsubscribe header
     for header in headers:
@@ -55,7 +74,7 @@ def get_unsubscribe_links_from_message(message: dict) -> List[str]:
 
     return unsubscribe_links
 
-def fetch_first_n_emails(service: Resource, n: int = 50) -> Tuple[List[dict], List[str]]:
+def fetch_first_n_emails(service: Resource, n: int = 50) -> List[Tuple[str, str]]:
     """Fetch the first N emails from the Gmail account."""
     unsubscribe_links: List[str] = []
     try:
@@ -75,25 +94,54 @@ def fetch_first_n_emails(service: Resource, n: int = 50) -> Tuple[List[dict], Li
             
             # Update the counter in place
             print(f"\r{' ' * 100}", end='')  # Clear the line by overwriting with spaces
-            print(f"\rProcessing email {index}/{total}: {subject[:100]}", end='')
+            print(f"\rProcessing email {index}/{total}", end='')
 
             # Extract unsubscribe links
             links: List[str] = get_unsubscribe_links_from_message(msg)
+            # print(links)
+
             if links:
                 unsubscribe_links.extend(links)
         
-        print()  # Move to the next line after processing
+        # print()  # Move to the next line after processing
 
     except Exception as e:
         print(f"\nAn error occurred: {e}")
 
-    return messages, unsubscribe_links
+    response: List[Tuple[str, str]] = [(tldextract.extract(link).registered_domain, link) for link in unsubscribe_links]
+
+    return response
 
 if __name__ == '__main__':
+    
+    # Authticate to Gmail API
     service: Resource = authenticate_gmail()
     print("Successfully authenticated ...")
-    messages, unsubscribe_links = fetch_first_n_emails(service, n=150)
-    print(f"Emails ingested: {len(messages)}")
+
+    # Fetch n most recent emails
+    unsubscribe_links = fetch_first_n_emails(service, n=100)
+    
     print(f"Unsubscribe Links Found: {len(unsubscribe_links)}")
-    # for link in unsubscribe_links:
-    #     print(link)
+
+    # Unsubscribe but not from ALLOWLIST
+    for parent_domain, unsubscribe_link in unsubscribe_links:
+        
+        if parent_domain not in ALLOWLIST:
+            unsubscribe_response = requests.get(
+                url=unsubscribe_link,
+                timeout=3
+            )
+            print(f"Successfull unsubscribed from: {parent_domain} \t\t\t {unsubscribe_response.status_code}")
+
+    # Write results to csv file for examination
+    # unique_parent_domains = set([link for _,link in response])
+    # with open(
+    #     file="unsubscribe_links.csv",
+    #     mode="w",
+    #     encoding="utf-8",
+    #     newline="\n",
+    # ) as file:
+    #     writer = csv.writer(file)
+
+    #     for parent_domain, unsubscribe_link in unsubscribe_links:
+    #         writer.writerow([parent_domain, unsubscribe_link])
